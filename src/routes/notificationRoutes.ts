@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { notificationController } from '../controllers/notificationController';
+import { 
+  createNotification, 
+  getUserNotifications, 
+  markAsRead, 
+  getUnreadCount 
+} from '../controllers/notificationController';
 import {
   createNotificationSchema,
   markAsReadSchema,
@@ -21,27 +26,27 @@ router.post(
   '/',
   notificationCreationLimiter,
   validateRequest(createNotificationSchema),
-  notificationController.createNotification
+  createNotification
 );
 
 // Get user notifications
 router.get(
   '/user/:userId',
   validateRequest(getNotificationsSchema),
-  notificationController.getUserNotifications
+  getUserNotifications
 );
 
 // Mark notification as read
 router.patch(
   '/:notificationId/read',
   validateRequest(markAsReadSchema),
-  notificationController.markAsRead
+  markAsRead
 );
 
 // Get unread count
 router.get(
   '/user/:userId/unread-count',
-  notificationController.getUnreadCount
+  getUnreadCount
 );
 
 export default router;

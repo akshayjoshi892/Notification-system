@@ -1,84 +1,118 @@
-import { createClient, RedisClientType } from 'redis';
+import Notification, { INotification } from '../models/Notification';
+import { redisService } from './redisService';
 
-export class RedisService {
-  private publisher: RedisClientType;
-  private subscriber: RedisClientType;
-  private isConnected: boolean = false;
+export class NotificationService {
+  private readonly NOTIFICATION_CHANNEL = 'notifications';
 
   constructor() {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    
-    this.publisher = createClient({ url: redisUrl });
-    this.subscriber = createClient({ url: redisUrl });
-
-    this.setupEventListeners();
+    this.setupRedisSubscriber();
   }
 
-  private setupEventListeners(): void {
-    this.publisher.on('error', (err) => {
-      console.error('Redis Publisher Error:', err);
-    });
-
-    this.subscriber.on('error', (err) => {
-      console.error('Redis Subscriber Error:', err);
-    });
-
-    this.publisher.on('connect', () => {
-      console.log('Redis Publisher Connected');
-    });
-
-    this.subscriber.on('connect', () => {
-      console.log('Redis Subscriber Connected');
-    });
+  private async setupRedisSubscriber(): Promise<void> {
+    await redisService.subscribe(this.NOTIFICATION_CHANNEL, this.handleRedisNotification.bind(this));
   }
 
-  async connect(): Promise<void> {
-    if (!this.isConnected) {
-      await this.publisher.connect();
-      await this.subscriber.connect();
-      this.isConnected = true;
-      console.log('Redis service connected successfully');
+  private async handleRedisNotification(message: string): Promise<void> {
+    try {
+      const notificationData = JSON.parse(message);
+      console.log('Received notification via Redis Pub/Sub:', notificationData);
+      
+      // Here you can add WebSocket integration or other real-time delivery mechanisms
+      // For now, we'll just log it
+    } catch (error) {
+      console.error('Error processing Redis notification:', error);
     }
   }
 
-  async publish(channel: string, message: any): Promise<void> {
+  async createNotification(notificationData: {
+    title: string;
+    message: string;
+    userId: string;
+    type?: string;
+  }): Promise<INotification> {
     try {
-      const stringifiedMessage = typeof message === 'string' ? message : JSON.stringify(message);
-      await this.publisher.publish(channel, stringifiedMessage);
+      // Save to MongoDB
+      const notification = new Notification(notificationData);
+      const savedNotification = await notification.save();
+
+      // Publish to Redis for real-time delivery
+      await redisService.publish(this.NOTIFICATION_CHANNEL, {
+        event: 'new_notification',
+        data: savedNotification.toJSON(),
+        timestamp: new Date()
+      });
+
+      return savedNotification;
     } catch (error) {
-      console.error('Error publishing to Redis:', error);
+      console.error('Error creating notification:', error);
       throw error;
     }
   }
 
-  async subscribe(channel: string, callback: (message: string) => void): Promise<void> {
+  async getUserNotifications(userId: string, page: number = 1, limit: number = 20): Promise<{
+    notifications: INotification[];
+    total: number;
+    page: number;
+    totalPages: number;
+  }> {
     try {
-      await this.subscriber.subscribe(channel, callback);
-      console.log(`Subscribed to Redis channel: ${channel}`);
+      const skip = (page - 1) * limit;
+
+      const [notifications, total] = await Promise.all([
+        Notification.find({ userId })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .exec(),
+        Notification.countDocuments({ userId })
+      ]);
+
+      return {
+        notifications,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
+      };
     } catch (error) {
-      console.error('Error subscribing to Redis channel:', error);
+      console.error('Error fetching user notifications:', error);
       throw error;
     }
   }
 
-  async unsubscribe(channel: string): Promise<void> {
+  async markAsRead(notificationId: string, userId: string): Promise<INotification | null> {
     try {
-      await this.subscriber.unsubscribe(channel);
-      console.log(`Unsubscribed from Redis channel: ${channel}`);
+      const notification = await Notification.findOneAndUpdate(
+        { _id: notificationId, userId },
+        { isRead: true },
+        { new: true }
+      );
+
+      if (notification) {
+        // Publish read event
+        await redisService.publish(this.NOTIFICATION_CHANNEL, {
+          event: 'notification_read',
+          data: notification.toJSON(),
+          timestamp: new Date()
+        });
+      }
+
+      return notification;
     } catch (error) {
-      console.error('Error unsubscribing from Redis channel:', error);
+      console.error('Error marking notification as read:', error);
       throw error;
     }
   }
 
-  async disconnect(): Promise<void> {
-    if (this.isConnected) {
-      await this.publisher.quit();
-      await this.subscriber.quit();
-      this.isConnected = false;
-      console.log('Redis service disconnected');
+  async getUnreadCount(userId: string): Promise<number> {
+    try {
+      return await Notification.countDocuments({ userId, isRead: false });
+    } catch (error) {
+      console.error('Error getting unread count:', error);
+      throw error;
     }
   }
 }
 
-export const redisService = new RedisService();
+// Create and export the instance
+const notificationService = new NotificationService();
+export { notificationService };

@@ -1,8 +1,8 @@
-import { createClient, RedisClientType } from 'redis';
+import { createClient } from 'redis';
 
 export class RedisService {
-  private publisher: RedisClientType;
-  private subscriber: RedisClientType;
+  private publisher: any;
+  private subscriber: any;
   private isConnected: boolean = false;
 
   constructor() {
@@ -15,11 +15,11 @@ export class RedisService {
   }
 
   private setupEventListeners(): void {
-    this.publisher.on('error', (err) => {
+    this.publisher.on('error', (err: any) => {
       console.error('Redis Publisher Error:', err);
     });
 
-    this.subscriber.on('error', (err) => {
+    this.subscriber.on('error', (err: any) => {
       console.error('Redis Subscriber Error:', err);
     });
 
